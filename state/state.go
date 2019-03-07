@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/roboll/helmfile/helmexec"
+	"github.com/roboll/helmfile/plugins/passwordstore"
 
 	"regexp"
 
@@ -1060,25 +1061,36 @@ func (st *HelmState) namespaceAndValuesFlags(helm helmexec.Interface, release *R
 	}
 
 	for _, value := range release.Secrets {
-		path := st.normalizePath(release.ValuesPathPrefix + value)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			if release.MissingFileHandler == nil || *release.MissingFileHandler == "Error" {
-				return nil, err
-			} else if *release.MissingFileHandler == "Warn" {
-				st.logger.Warnf("skipping missing secrets file \"%s\"", path)
-				continue
-			} else if *release.MissingFileHandler == "Info" {
-				st.logger.Infof("skipping missing secrets file \"%s\"", path)
-				continue
-			} else {
-				st.logger.Debugf("skipping missing secrets file \"%s\"", path)
+		var valfile string
+		var err error
+		if strings.HasPrefix(value, "pass:") {
+			valfile, err = passwordstore.DecryptToFile(strings.TrimPrefix(value, "pass:"))
+			if err != nil {
+				st.logger.Errorf("failed to decrypt secret: %s", err)
 				continue
 			}
-		}
+		} else {
+			path := st.normalizePath(release.ValuesPathPrefix + value)
 
-		valfile, err := helm.DecryptSecret(path)
-		if err != nil {
-			return nil, err
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				if release.MissingFileHandler == nil || *release.MissingFileHandler == "Error" {
+					return nil, err
+				} else if *release.MissingFileHandler == "Warn" {
+					st.logger.Warnf("skipping missing secrets file \"%s\"", path)
+					continue
+				} else if *release.MissingFileHandler == "Info" {
+					st.logger.Infof("skipping missing secrets file \"%s\"", path)
+					continue
+				} else {
+					st.logger.Debugf("skipping missing secrets file \"%s\"", path)
+					continue
+				}
+			}
+
+			valfile, err = helm.DecryptSecret(path)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		release.generatedValues = append(release.generatedValues, valfile)
